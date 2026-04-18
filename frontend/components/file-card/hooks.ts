@@ -2,7 +2,7 @@ import { useState, useMemo, useRef } from "react";
 import { useActiveSelectedKeys, useFileDataStore, useFileUIStore } from "@/stores/file";
 import { getFileTypeFromKey, downloadFile, getMissingChunkIndices, processBatch } from "@/lib/utils";
 import { getFileDownloadUrl, getFileUrl, moveToTrash, toggleLike, uploadChunk } from "@/lib/api";
-import { MAX_CONCURRENTS, binaryExtensions } from "@/lib/types";
+import { MAX_CONCURRENTS, binaryExtensions, DIRECT_DOWNLOAD_LIMIT } from "@/lib/types";
 import { toast } from "sonner";
 import { shouldBlur } from "@/lib/utils";
 import { FileItem, FileType, MAX_CHUNK_SIZE } from "@shared/types";
@@ -75,29 +75,41 @@ export function useFileCardActions(file: FileItem) {
   const handleView = () => {
     const url = getFileUrl(file.name);
     const fileName = file.metadata?.fileName?.toLowerCase() || "";
+    const fileSize = file.metadata?.fileSize || 0;
     
     // 文本阅读器：如果是文档类型且不是已知的二进制格式
     if (
       fileType === FileType.Document && 
       !binaryExtensions.some(ext => fileName.endsWith(ext))
     ) {
+      // 大文件直接触发下载
+      if (fileSize > DIRECT_DOWNLOAD_LIMIT) {
+        handleDownload();
+        return;
+      }
       openPreview(file, 'text');
       return;
     }
 
-    // 视频预览
+    // 视频预览（预览器支持流式播放，不需要改变）
     if (fileType === FileType.Video) {
       openPreview(file, 'video');
       return;
     }
 
-    // 音频预览
+    // 音频预览（预览器支持流式播放，不需要改变）
     if (fileType === FileType.Audio) {
       openPreview(file, 'audio');
       return;
     }
     
-    // 其他类型（图片、PDF、压缩包等）直接打开
+    // 其他类型（图片、PDF、压缩包等）
+    // 大文件直接触发下载
+    if (fileSize > DIRECT_DOWNLOAD_LIMIT) {
+      handleDownload();
+      return;
+    }
+    
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
