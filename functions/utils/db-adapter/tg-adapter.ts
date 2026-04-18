@@ -476,11 +476,15 @@ export class TGAdapter extends BaseAdapter {
       },
     });
 
+    const hasRange = Boolean(req?.headers.get("Range"));
+
     return new Response(stream, {
-      status: 206, // 始终返回 206 Partial Content
+      status: hasRange ? 206 : 200,
       headers: {
         "Content-Type": contentType,
-        "Content-Range": `bytes ${start}-${end}/${totalSize}`,
+        ...(hasRange
+          ? { "Content-Range": `bytes ${start}-${end}/${totalSize}` }
+          : {}),
         "Content-Length": String(end - start + 1),
         "Content-Disposition": encodeContentDisposition(metadata.fileName),
         "Cache-Control": "public, max-age=3600",
