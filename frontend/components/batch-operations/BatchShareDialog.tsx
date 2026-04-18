@@ -47,7 +47,6 @@ export function BatchShareDialog({
   // 表单状态
   const [expireIn, setExpireIn] = useState<string>('3600');
   const [customDays, setCustomDays] = useState<string>('1');
-  const [oneTime, setOneTime] = useState(false);
   const [bundleName, setBundleName] = useState<string>('');
 
   // 对话框打开时重置状态
@@ -56,7 +55,6 @@ export function BatchShareDialog({
       setShareLink(null);
       setExpireIn('3600');
       setCustomDays('1');
-      setOneTime(false);
       setBundleName('');
     }
   }, [open]);
@@ -85,7 +83,6 @@ export function BatchShareDialog({
         fileKeys: isSingleFile ? undefined : files.map(f => f.name),
         bundleName: isSingleFile ? undefined : (bundleName.trim() || undefined),
         expireIn: seconds,
-        oneTime,
       });
 
       const url = `${window.location.origin}/s?k=${data.token}`;
@@ -110,7 +107,6 @@ export function BatchShareDialog({
     setShareLink(null);
     setExpireIn('3600');
     setCustomDays('1');
-    setOneTime(false);
     setBundleName('');
   };
 
@@ -137,11 +133,11 @@ export function BatchShareDialog({
         {!shareLink ? (
           <div className="grid gap-4 py-4">
             {/* 选中的文件信息 */}
-            <div className="p-3 rounded-lg bg-secondary/30 border border-glass-border">
+            <div className="p-3 rounded-lg bg-secondary/30 border border-glass-border min-w-0">
               <p className="text-sm text-foreground/60 flex items-center gap-2">
-                <Info className="h-4 w-4 text-primary" />
+                <Info className="h-4 w-4 text-primary shrink-0" />
                 {isSingleFile ? (
-                  <span className="truncate" title={files[0]?.metadata?.fileName || files[0]?.name}>
+                  <span className="truncate block" title={files[0]?.metadata?.fileName || files[0]?.name}>
                     {files[0]?.metadata?.fileName || files[0]?.name}
                   </span>
                 ) : (
@@ -216,19 +212,6 @@ export function BatchShareDialog({
                 />
               </div>
             )}
-
-            {/* 阅后即焚 */}
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="one-time"
-                checked={oneTime}
-                onCheckedChange={(c) => setOneTime(c === true)}
-                disabled={isSubmitting}
-              />
-              <Label htmlFor="one-time" className="cursor-pointer text-sm">
-                阅后即焚（下载一次后自动失效）
-              </Label>
-            </div>
           </div>
         ) : (
           <div className="flex items-center space-x-2 py-4">

@@ -79,10 +79,6 @@ function ShareContent() {
     setIsActioning(true);
     try {
       triggerDownload(action(), filename);
-      if (meta?.oneTime) {
-        setError('This one-time link has been used.');
-        setMeta(null);
-      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -152,7 +148,7 @@ function ShareContent() {
                 })}
               </div>
             ) : (
-              meta?.mimeType?.startsWith('image/') && token && !meta.oneTime && (
+              meta?.mimeType?.startsWith('image/') && token && (
                 <div className="relative aspect-video w-full overflow-hidden">
                   <img src={shareApi.getDownloadUrl(token)} alt={meta.fileName} className="h-full w-full object-contain" />
                 </div>
@@ -205,7 +201,6 @@ const ErrorCard = ({ error }: { error: string }) => (
 
 const StatusBadges = ({ meta }: { meta: ShareMetaResponse | null }) => (
   <div className="flex flex-col gap-2">
-    {meta?.oneTime && <div className="flex items-center justify-center gap-2 rounded-lg bg-orange-500/10 px-3 py-2 text-sm text-orange-600"><Clock className="h-4 w-4" />阅后即焚</div>}
     {meta?.expiresAt && <div className="flex items-center justify-center gap-2 rounded-lg bg-blue-500/10 px-3 py-2 text-sm text-blue-600"><CalendarClock className="h-4 w-4" />将于 {formatTime(meta.expiresAt)} 过期</div>}
   </div>
 );

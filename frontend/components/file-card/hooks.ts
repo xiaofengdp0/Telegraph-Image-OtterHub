@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef } from "react";
 import { useActiveSelectedKeys, useFileDataStore, useFileUIStore } from "@/stores/file";
 import { getFileTypeFromKey, downloadFile, getMissingChunkIndices, processBatch } from "@/lib/utils";
-import { getFileUrl, moveToTrash, toggleLike, uploadChunk } from "@/lib/api";
+import { getFileDownloadUrl, getFileUrl, moveToTrash, toggleLike, uploadChunk } from "@/lib/api";
 import { MAX_CONCURRENTS, binaryExtensions } from "@/lib/types";
 import { toast } from "sonner";
 import { shouldBlur } from "@/lib/utils";
@@ -64,8 +64,12 @@ export function useFileCardActions(file: FileItem) {
   };
 
   const handleDownload = () => {
-    const url = getFileUrl(file.name);
-    downloadFile(url, file.metadata);
+    const url = getFileDownloadUrl(file.name);
+    void downloadFile(url, file.metadata).then((result) => {
+      if (result.status === "cancelled") return;
+    }).catch(() => {
+      toast.error("下载失败");
+    });
   };
   
   const handleView = () => {

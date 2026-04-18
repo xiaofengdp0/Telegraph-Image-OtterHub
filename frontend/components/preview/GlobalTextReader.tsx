@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { usePreviewStore } from "@/stores/preview-store";
-import { getFileUrl } from "@/lib/api";
+import { getFileDownloadUrl, getFileUrl } from "@/lib/api";
 import { downloadFile } from "@/lib/utils";
 import { Copy, CopyCheck, Download, Minus, X, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -60,8 +60,12 @@ export function GlobalTextReader({ position = "top-[60%]" }: { position?: string
 
   const handleDownload = () => {
     if (!activeFile) return;
-    const url = getFileUrl(activeFile.name);
-    downloadFile(url, activeFile.metadata);
+    const url = getFileDownloadUrl(activeFile.name);
+    void downloadFile(url, activeFile.metadata).then((result) => {
+      if (result.status === "cancelled") return;
+    }).catch(() => {
+      toast.error("下载失败");
+    });
   };
 
   if (!activeFile) return null;

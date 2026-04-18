@@ -6,14 +6,7 @@ import { toast } from "sonner";
 import { shareApi } from "@/lib/api";
 import { ShareListItem } from "@shared/types";
 import { Button } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { formatFileSize } from "@/lib/utils";
 
@@ -33,9 +26,7 @@ export function ShareTab() {
     }
   };
 
-  useEffect(() => {
-    fetchShares();
-  }, []);
+  useEffect(() => { fetchShares(); }, []);
 
   const handleRevoke = async (token: string) => {
     setRevoking((v) => [...v, token]);
@@ -56,101 +47,44 @@ export function ShareTab() {
   };
 
   const renderRows = () => {
-    if (loading) {
-      return (
-        <TableRow>
-          <TableCell colSpan={5} className="h-32 text-center">
-            <Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground/50" />
-          </TableCell>
-        </TableRow>
-      );
-    }
+    if (loading) return (
+      <TableRow><TableCell colSpan={5} className="h-32 text-center"><Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground/50" /></TableCell></TableRow>
+    );
 
-    if (!shares.length) {
-      return (
-        <TableRow>
-          <TableCell colSpan={5} className="h-32 text-center text-muted-foreground">
-            <div className="flex flex-col items-center justify-center gap-2">
-              <Inbox className="h-8 w-8 text-muted-foreground/30" />
-              <span>暂无活跃分享</span>
-            </div>
-          </TableCell>
-        </TableRow>
-      );
-    }
+    if (!shares.length) return (
+      <TableRow><TableCell colSpan={5} className="h-32 text-center text-muted-foreground"><div className="flex flex-col items-center justify-center gap-2"><Inbox className="h-8 w-8 text-muted-foreground/30" /><span>暂无活跃分享</span></div></TableCell></TableRow>
+    );
 
     return shares.map((s) => {
+      const isBundle = s.type === 'bundle';
       const isExpired = s.expiresAt && s.expiresAt < Date.now();
       const isRevoking = revoking.includes(s.token);
-
-      // 根据类型确定显示内容
-      const displayName = s.type === 'bundle'
-        ? s.bundleName || `share-${s.token.slice(0, 8)}`
-        : s.fileName;
-      const displaySize = s.type === 'bundle'
-        ? s.totalSize
-        : s.fileSize;
+      const displayName = isBundle ? (s.bundleName || `share-${s.token.slice(0, 8)}`) : s.fileName;
 
       return (
         <TableRow key={s.token} className="group transition-colors">
           <TableCell>
             <div className="flex flex-col gap-1">
-              <span className="truncate max-w-[200px] font-medium" title={displayName}>
-                {displayName}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                {formatFileSize(displaySize)}
-              </span>
+              <span className="truncate max-w-[200px] font-medium" title={displayName}>{displayName}</span>
+              <span className="text-xs text-muted-foreground">{formatFileSize(isBundle ? s.totalSize : s.fileSize)}</span>
             </div>
           </TableCell>
-
           <TableCell>
-            <div className="flex flex-col gap-1">
-              <Badge variant={s.oneTime ? "secondary" : "outline"} className="whitespace-nowrap w-fit">
-                {s.oneTime ? "阅后即焚" : "普通分享"}
-              </Badge>
-              {s.type === 'bundle' && (
-                <Badge variant="outline" className="whitespace-nowrap w-fit">
-                  {s.files.length} 个文件
-                </Badge>
-              )}
-            </div>
+            <Badge variant="outline" className="whitespace-nowrap w-fit">
+              {isBundle ? s.files.length : 1} 个文件
+            </Badge>
           </TableCell>
-
           <TableCell className="text-muted-foreground whitespace-nowrap text-sm">
             {format(s.createdAt, "yyyy-MM-dd HH:mm")}
           </TableCell>
-
           <TableCell className="whitespace-nowrap text-sm">
-            {isExpired ? (
-              <span className="text-destructive font-medium">已过期</span>
-            ) : (
-              <span className="text-muted-foreground">
-                {s.expiresAt ? format(s.expiresAt, "yyyy-MM-dd HH:mm") : "永久有效"}
-              </span>
-            )}
+            {isExpired ? <span className="text-destructive font-medium">已过期</span> : <span className="text-muted-foreground">{s.expiresAt ? format(s.expiresAt, "yyyy-MM-dd HH:mm") : "永久有效"}</span>}
           </TableCell>
-
           <TableCell className="text-right">
-            {/* 桌面端默认隐藏按钮，悬停(group-hover)时显示，界面更清爽 */}
             <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity focus-within:opacity-100 sm:opacity-100">
-              <Button size="icon" variant="ghost" onClick={() => handleCopy(s.token)} title="复制链接">
-                <Copy className="h-4 w-4" />
-              </Button>
-
-              <Button
-                size="icon"
-                variant="ghost"
-                disabled={isRevoking}
-                onClick={() => handleRevoke(s.token)}
-                className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                title="撤销分享"
-              >
-                {isRevoking ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Trash2 className="h-4 w-4" />
-                )}
+              <Button size="icon" variant="ghost" onClick={() => handleCopy(s.token)} title="复制链接"><Copy className="h-4 w-4" /></Button>
+              <Button size="icon" variant="ghost" disabled={isRevoking} onClick={() => handleRevoke(s.token)} className="text-destructive hover:bg-destructive/10" title="撤销分享">
+                {isRevoking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
               </Button>
             </div>
           </TableCell>
@@ -166,10 +100,8 @@ export function ShareTab() {
           <h2 className="text-lg font-semibold tracking-tight">分享链接</h2>
           <p className="text-sm text-muted-foreground">管理当前活跃的文件分享链接</p>
         </div>
-
         <Button size="sm" variant="secondary" onClick={fetchShares} disabled={loading}>
-          <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-          刷新
+          <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> 刷新
         </Button>
       </div>
 

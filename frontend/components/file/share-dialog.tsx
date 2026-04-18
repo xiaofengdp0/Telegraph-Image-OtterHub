@@ -16,7 +16,6 @@ import {
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { shareApi } from '@/lib/api';
 import { toast } from 'sonner';
@@ -29,88 +28,70 @@ interface ShareDialogProps {
   fileName: string;
 }
 
-export function ShareDialog({
-  open,
-  onOpenChange,
-  fileKey,
-  fileName,
-}: ShareDialogProps) {
+export function ShareDialog({ open, onOpenChange, fileKey, fileName }: ShareDialogProps) {
   const [loading, setLoading] = useState(false);
   const [shareLink, setShareLink] = useState<string | null>(null);
   
-  // Form State
-  const [expireIn, setExpireIn] = useState<string>('3600'); // Default 1 hour
-  const [customDays, setCustomDays] = useState<string>('1');
-  const [oneTime, setOneTime] = useState(false);
+  const [expireIn, setExpireIn] = useState('3600');
+  const [customDays, setCustomDays] = useState('1');
 
   const handleCreateLink = async () => {
+    let seconds: number | undefined;
+
+    // 更简洁的参数计算逻辑
+    if (expireIn === 'custom') {
+      const days = parseInt(customDays, 10);
+      if (!days || days < 1 || days > 365) {
+        return toast.error('请输入有效的天数 (1-365)');
+      }
+      seconds = days * 86400;
+    } else if (expireIn !== '-1') {
+      seconds = parseInt(expireIn, 10);
+    }
+
     setLoading(true);
     try {
-      let seconds: number | undefined;
-      if (expireIn === 'custom') {
-        const days = parseInt(customDays);
-        if (isNaN(days) || days < 1 || days > 365) {
-          toast.error('请输入有效的天数 (1-365)');
-          setLoading(false);
-          return;
-        }
-        seconds = days * 86400;
-      } else {
-        seconds = expireIn === '-1' ? undefined : parseInt(expireIn);
-      }
-
-      const data = await shareApi.create({
-        fileKey,
-        expireIn: seconds,
-        oneTime,
-      });
-
-      const url = `${window.location.origin}/s?k=${data.token}`;
-      setShareLink(url);
+      const { token } = await shareApi.create({ fileKey, expireIn: seconds });
+      setShareLink(`${window.location.origin}/s?k=${token}`);
       toast.success('分享链接已创建');
-    } catch (error) {
+    } catch {
       toast.error('创建分享链接失败');
-      console.error(error);
     } finally {
       setLoading(false);
     }
   };
 
   const handleCopy = () => {
-    if (shareLink) {
-      navigator.clipboard.writeText(shareLink);
-      toast.success('链接已复制到剪贴板');
-    }
+    if (!shareLink) return;
+    navigator.clipboard.writeText(shareLink);
+    toast.success('链接已复制');
   };
 
   const handleReset = () => {
     setShareLink(null);
     setExpireIn('3600');
     setCustomDays('1');
-    setOneTime(false);
   };
 
   return (
     <Dialog open={open} onOpenChange={(val) => {
       onOpenChange(val);
-      if (!val) setTimeout(handleReset, 300); // Reset after close animation
+      if (!val) setTimeout(handleReset, 300); // 弹窗关闭动画结束后再重置状态
     }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>分享文件</DialogTitle>
           <DialogDescription>
-            为 <span className="font-medium text-foreground">{fileName}</span> 创建一个临时分享链接
+            为 <span className="font-medium text-foreground">{fileName}</span> 创建临时分享链接
           </DialogDescription>
         </DialogHeader>
 
         {!shareLink ? (
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
-              <Label htmlFor="expire">有效期</Label>
+              <Label>有效期</Label>
               <Select value={expireIn} onValueChange={setExpireIn}>
-                <SelectTrigger id="expire">
-                  <SelectValue placeholder="选择有效期" />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="选择有效期" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="3600">1 小时</SelectItem>
                   <SelectItem value="86400">1 天</SelectItem>
@@ -123,76 +104,48 @@ export function ShareDialog({
 
             {expireIn === 'custom' && (
               <div className="grid gap-2">
-                <Label htmlFor="custom-days">天数（最多 365 天）</Label>
+                <Label>自定义天数 (1-365)</Label>
                 <Input
-                  id="custom-days"
                   type="number"
-                  min="1"
-                  max="365"
                   value={customDays}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    if (val === '') {
-                      setCustomDays('');
-                      return;
-                    }
-                    const num = parseInt(val);
-                    if (!isNaN(num)) {
-                      if (num > 365) setCustomDays('365');
-                      else if (num < 1) setCustomDays('1');
-                      else setCustomDays(val);
-                    }
-                  }}
                   placeholder="输入天数"
+                  onChange={(e) => {
+                    // 正则过滤非数字(防止输入e、+、-等)，并用 Math.min/max 限制边界
+                    const val = e.target.value.replace(/\D/g, ''); 
+                    if (!val) return setCustomDays('');
+                    const clampedVal = Math.min(Math.max(parseInt(val, 10), 1), 365);
+                    setCustomDays(clampedVal.toString());
+                  }}
                 />
               </div>
             )}
-
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="one-time"
-                checked={oneTime}
-                onCheckedChange={(c) => setOneTime(c === true)}
-              />
-              <Label htmlFor="one-time" className="cursor-pointer">
-                一次性下载（阅后即焚）
-              </Label>
-            </div>
           </div>
         ) : (
-          <div className="flex items-center space-x-2 py-4">
-            <div className="grid flex-1 gap-2">
-              <Label htmlFor="link" className="sr-only">链接</Label>
-              <Input id="link" value={shareLink} readOnly />
-            </div>
-            <Button size="sm" className="px-3" onClick={handleCopy}>
-              <span className="sr-only">复制</span>
+          <div className="flex items-center gap-2 py-4">
+            <Input value={shareLink} readOnly />
+            <Button size="icon" onClick={handleCopy} title="复制链接">
               <Copy className="h-4 w-4" />
             </Button>
           </div>
         )}
 
         <DialogFooter className="sm:justify-between">
-          {!shareLink ? (
-             <div className="flex w-full justify-end gap-2">
-                <Button variant="secondary" onClick={() => onOpenChange(false)}>
-                  取消
-                </Button>
+          <div className="flex w-full justify-end gap-2">
+            {!shareLink ? (
+              <>
+                <Button variant="secondary" onClick={() => onOpenChange(false)}>取消</Button>
                 <Button onClick={handleCreateLink} disabled={loading}>
                   {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   创建链接
                 </Button>
-             </div>
-          ) : (
-             <div className="flex w-full justify-end gap-2">
-                <Button variant="secondary" onClick={handleReset}>
-                  再次创建
-                </Button>
-                <Button onClick={() => onOpenChange(false)}>
-                  完成
-                </Button>
-             </div>
-          )}
+              </>
+            ) : (
+              <>
+                <Button variant="secondary" onClick={handleReset}>继续分享</Button>
+                <Button onClick={() => onOpenChange(false)}>完成</Button>
+              </>
+            )}
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -102,10 +102,8 @@ export interface SingleShareData {
   fileKey: string;
   fileName: string;
   fileSize: number;
-  oneTime?: boolean;
   createdAt: number;
   expiresAt?: number;
-  consumedAt?: number;
 }
 
 // 打包分享数据
@@ -115,10 +113,8 @@ export interface BundleShareData {
   files: BundleFileInfo[];
   bundleName?: string;    // 用户自定义名称，可选
   totalSize: number;
-  oneTime?: boolean;
   createdAt: number;
   expiresAt?: number;
-  consumedAt?: number;
 }
 
 // 分享数据联合类型
@@ -133,7 +129,6 @@ export type ShareListItem = {
       fileKey: string;
       fileName: string;
       fileSize: number;
-      oneTime?: boolean;
       createdAt: number;
       expiresAt?: number;
     }
@@ -142,7 +137,6 @@ export type ShareListItem = {
       files: BundleFileInfo[];
       bundleName?: string;
       totalSize: number;
-      oneTime?: boolean;
       createdAt: number;
       expiresAt?: number;
     }
@@ -155,7 +149,6 @@ export interface CreateShareRequest {
   fileKeys?: string[];    // bundle 模式
   bundleName?: string;    // 用户自定义打包名称（bundle 模式）
   expireIn?: number;
-  oneTime?: boolean;
 }
 
 // 分享元数据响应
@@ -170,7 +163,6 @@ export interface ShareMetaResponse {
   bundleName?: string;  // bundle 显示名称
   totalSize?: number;   // bundle 总大小
   // 通用字段
-  oneTime?: boolean;
   createdAt: number;
   expiresAt?: number;
 }

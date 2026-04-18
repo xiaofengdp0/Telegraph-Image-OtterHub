@@ -8,7 +8,12 @@ import {
   CloudSync, 
   CloudUpload,
   Info,
-  ShieldAlert
+  ShieldAlert,
+  FolderOpen,
+  Trash2,
+  RefreshCw,
+  Download,
+  AlertCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -16,8 +21,14 @@ import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useGeneralSettingsStore } from "@/stores/general-store";
 import { cn } from "@/lib/utils";
+import {
+  loadDirectoryHandle,
+  clearDirectoryHandleCache,
+  pickDownloadDirectoryForFirstTime,
+} from "@/lib/utils/file";
 
 export function GeneralTab() {
   const { 
@@ -33,12 +44,22 @@ export function GeneralTab() {
   const [isUploading, setIsUploading] = useState(false);
   const [localThreshold, setLocalThreshold] = useState(dataSaverThreshold.toString());
 
-  // 1. 当外部 store 变化时同步到本地输入框（如云端同步后）
+  const [currentDir, setCurrentDir] = useState<string | null>(null);
+  const [isDirLoading, setIsDirLoading] = useState(false);
+  const [supportsFsApi, setSupportsFsApi] = useState(false);
+
+  useEffect(() => {
+    setSupportsFsApi(typeof window !== "undefined" && "showDirectoryPicker" in window);
+
+    if (supportsFsApi) {
+      loadCurrentDirectory();
+    }
+  }, [supportsFsApi]);
+
   useEffect(() => {
     setLocalThreshold(dataSaverThreshold.toString());
   }, [dataSaverThreshold]);
 
-  // 2. 阈值输入防抖同步到本地 Store
   useEffect(() => {
     const threshold = parseFloat(localThreshold);
     if (isNaN(threshold) || threshold < 0 || threshold === dataSaverThreshold) {
@@ -51,6 +72,43 @@ export function GeneralTab() {
 
     return () => clearTimeout(timer);
   }, [localThreshold, dataSaverThreshold, setDataSaverThreshold]);
+
+  const loadCurrentDirectory = async () => {
+    try {
+      const handle = await loadDirectoryHandle();
+      setCurrentDir(handle?.name || null);
+    } catch {
+      setCurrentDir(null);
+    }
+  };
+
+  const handleChangeDirectory = async () => {
+    setIsDirLoading(true);
+    try {
+      const result = await pickDownloadDirectoryForFirstTime();
+      if (result) {
+        setCurrentDir(result.dirName);
+        toast.success(`下载目录已更改为: ${result.dirName}`);
+      }
+    } catch {
+      toast.error("更改目录失败");
+    } finally {
+      setIsDirLoading(false);
+    }
+  };
+
+  const handleClearDirectory = async () => {
+    setIsDirLoading(true);
+    try {
+      await clearDirectoryHandleCache();
+      setCurrentDir(null);
+      toast.success("下载目录已清除，下次下载将重新选择");
+    } catch {
+      toast.error("清除目录失败");
+    } finally {
+      setIsDirLoading(false);
+    }
+  };
 
   // 从云端同步
   const handleFetchFromCloud = async () => {
@@ -184,6 +242,71 @@ export function GeneralTab() {
             </div>
           </CardContent>
         </Card>
+
+        {/* 3. 下载目录管理 */}
+        {supportsFsApi && (
+          <Card className="border border-border/40 shadow-sm bg-muted/10 backdrop-blur-sm rounded-2xl overflow-hidden">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2 mb-1">
+                <Download className="h-4 w-4 text-orange-500" />
+                <CardTitle className="text-base">下载目录管理</CardTitle>
+              </div>
+              <CardDescription>管理批量下载文件的保存目录</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4">
+              <div className="flex items-center justify-between p-4 rounded-lg bg-background/50 border border-border/20">
+                <div className="flex items-center gap-3">
+                  <FolderOpen className="h-5 w-5 text-blue-500" />
+                  <div>
+                    <p className="font-medium text-sm">当前下载目录</p>
+                    <p className="text-xs text-muted-foreground">
+                      {currentDir || "未设置"}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleChangeDirectory}
+                    disabled={isDirLoading}
+                    className="h-9"
+                  >
+                    <RefreshCw className={`h-4 w-4 mr-2 ${isDirLoading ? "animate-spin" : ""}`} />
+                    更改目录
+                  </Button>
+                  {currentDir && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleClearDirectory}
+                      disabled={isDirLoading}
+                      className="h-9"
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      清除
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              <p className="text-[11px] text-muted-foreground leading-relaxed flex items-start gap-1.5 bg-muted/30 p-2 rounded-lg border border-border/20">
+                <Info className="h-3 w-3 mt-0.5 shrink-0 opacity-60" />
+                首次下载时会提示选择目录，建议先在下载目录中手动创建 OtterHub 文件夹并选中它。之后会自动使用已选目录；如果权限失效，下次下载时会重新提示选择。
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {!supportsFsApi && (
+          <Alert className="border-yellow-500/50 bg-yellow-500/10">
+            <AlertCircle className="h-4 w-4 text-yellow-600" />
+            <AlertTitle className="text-yellow-800">下载功能受限</AlertTitle>
+            <AlertDescription className="text-yellow-700">
+              您的浏览器不支持 File System Access API，无法自定义下载目录。建议使用 Chrome 或 Edge 浏览器以获得最佳体验。
+            </AlertDescription>
+          </Alert>
+        )}
       </div>
     </div>
   );

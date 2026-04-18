@@ -6,15 +6,9 @@ import { fail, ok } from '@utils/response';
 import { DBAdapterFactory } from '@utils/db-adapter';
 import type { Env, KVNamespace } from '../types/hono';
 import { getFileTypeByName } from '@utils/file';
-import { MAX_CHUNK_SIZE, BundleFileInfo, MAX_FILES_IN_BUNDLE, ShareData, SingleShareData, BundleShareData, ShareListItem, MAX_FILENAME_LENGTH } from '@shared/types';
+import { MAX_CHUNK_SIZE, BundleFileInfo, MAX_FILES_IN_BUNDLE, ShareData, SingleShareData, BundleShareData, ShareListItem } from '@shared/types';
 import { authMiddleware } from 'middleware/auth';
-import { ZipWriter, BlobReader, configure } from '@zip.js/zip.js';
-
-// Cloudflare Worker 兼容性配置：禁用 CompressionStream 避免运行时 bug
-// 参考：https://github.com/gildas-lormeau/zip.js/discussions/514
-configure({
-  useCompressionStream: false,
-});
+import { createZipDownloadResponse, sanitizeArchiveName } from '@utils/zip-download';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -23,55 +17,10 @@ const shareKeyPrefix = 'share:';
 // --- Helpers ---
 
 /**
- * 计算阅后即焚链接的保留时间 (TTL)
- * 考虑到大文件分段请求，给予一定的缓冲时间
- */
-function calcBurnTTL(fileSize: number): number {
-  if (fileSize <= MAX_CHUNK_SIZE) {
-    return 0;
-  }
-  const MIN_TTL = 60; // Cloudflare 最小TTL: 60s
-  const MAX_TTL = 300; // 最多保留 5 分钟
-
-  // 基础 60s + 每 20MB (一个分片) 增加 3s
-  const chunks = Math.ceil(fileSize / MAX_CHUNK_SIZE);
-  const ttl = MIN_TTL + chunks * 3;
-
-  return Math.min(Math.max(ttl, MIN_TTL), MAX_TTL);
-}
-
-/**
  * 计算打包分享的总文件大小
  */
 function calcBundleTotalSize(files: BundleFileInfo[]): number {
   return files.reduce((sum, f) => sum + f.size, 0);
-}
-
-/**
- * 标记阅后即焚链接已被消费
- */
-async function burnShareLink(
-  kv: KVNamespace,
-  shareKey: string,
-  shareData: ShareData
-) {
-  shareData.consumedAt = Date.now();
-
-  // 计算总大小用于 TTL
-  const totalSize = shareData.type === 'single'
-    ? shareData.fileSize
-    : calcBundleTotalSize(shareData.files);
-  const ttl = calcBurnTTL(totalSize);
-
-  if (ttl <= 0) {
-    await kv.delete(shareKey);
-    return;
-  }
-
-  // 音视频文件等大文件需要 Range 支持或合并，设置短TTL
-  await kv.put(shareKey, JSON.stringify(shareData), {
-    expirationTtl: ttl,
-  });
 }
 
 /**
@@ -96,7 +45,6 @@ const createShareSchema = z.object({
   fileKeys: z.array(z.string()).optional(), // bundle 模式
   bundleName: z.string().optional(),    // bundle 模式下用户自定义名称
   expireIn: z.number().optional(), // Seconds from now, undefined means forever (or max KV limit)
-  oneTime: z.boolean().optional(),
 });
 
 // 1. Create Share Link (Protected)
@@ -105,7 +53,7 @@ app.post(
   authMiddleware,
   zValidator('json', createShareSchema),
   async (c) => {
-    const { type, fileKey, fileKeys, bundleName, expireIn, oneTime } = c.req.valid('json');
+    const { type, fileKey, fileKeys, bundleName, expireIn } = c.req.valid('json');
     const kv = c.env.oh_file_url;
     const db = DBAdapterFactory.getAdapter(c.env);
 
@@ -126,7 +74,6 @@ app.post(
       const shareData: SingleShareData = {
         type: 'single',
         fileKey,
-        oneTime,
         createdAt: now,
         fileName: file.metadata.fileName,
         fileSize: file.metadata.fileSize,
@@ -171,7 +118,6 @@ app.post(
       files,
       bundleName,
       totalSize,
-      oneTime,
       createdAt: now,
       expiresAt,
     };
@@ -202,7 +148,6 @@ app.get('/list', authMiddleware, async (c) => {
             files: data.files,
             bundleName: data.bundleName,
             totalSize: data.totalSize,
-            oneTime: data.oneTime,
             createdAt: data.createdAt,
             expiresAt: data.expiresAt,
           });
@@ -213,7 +158,6 @@ app.get('/list', authMiddleware, async (c) => {
             fileKey: data.fileKey,
             fileName: data.fileName,
             fileSize: data.fileSize,
-            oneTime: data.oneTime,
             createdAt: data.createdAt,
             expiresAt: data.expiresAt,
           });
@@ -253,7 +197,6 @@ app.get('/:token/meta', async (c) => {
       files: shareData.files,
       bundleName: shareData.bundleName,
       totalSize: shareData.totalSize,
-      oneTime: shareData.oneTime,
       createdAt: shareData.createdAt,
       expiresAt: shareData.expiresAt,
     });
@@ -271,7 +214,6 @@ app.get('/:token/meta', async (c) => {
     fileName: file.metadata.fileName,
     fileSize: file.metadata.fileSize,
     mimeType: fileType,
-    oneTime: shareData.oneTime,
     createdAt: shareData.createdAt,
     expiresAt: shareData.expiresAt
   });
@@ -304,35 +246,11 @@ app.get('/:token/raw', async (c) => {
 
     const resp = await db.get(fileKey, c.req.raw);
 
-    // 阅后即焚：只在「第一次成功 GET」时触发
-    if (
-      resp.ok &&
-      c.req.method === 'GET' &&
-      shareData.oneTime &&
-      !shareData.consumedAt
-    ) {
-      c.executionCtx.waitUntil(
-        burnShareLink(kv, shareKey, shareData)
-      );
-    }
-
     return resp;
   }
 
   // 单文件分享
   const resp = await db.get(shareData.fileKey, c.req.raw);
-
-  // 阅后即焚：只在「第一次成功 GET」时触发
-  if (
-    resp.ok &&
-    c.req.method === 'GET' &&
-    shareData.oneTime &&
-    !shareData.consumedAt
-  ) {
-    c.executionCtx.waitUntil(
-      burnShareLink(kv, shareKey, shareData)
-    );
-  }
 
   return resp;
 });
@@ -358,58 +276,14 @@ app.get('/:token/download-all', async (c) => {
 
   const db = DBAdapterFactory.getAdapter(c.env);
 
-  // 创建流式 ZIP 压缩
-  const { readable, writable } = new TransformStream();
-  const zipWriter = new ZipWriter(writable);
-
-  // 存储所有添加文件的 Promise，用于错误处理
-  const addPromises: Promise<void>[] = [];
-
-  // 逐个添加文件到 ZIP（流式处理，低内存占用）
-  for (const fileInfo of shareData.files) {
-    const addFilePromise = (async () => {
-      try {
-        const resp = await db.get(fileInfo.key, new Request(c.req.url));
-        if (resp.ok) {
-          const blob = await resp.blob();
-          await zipWriter.add(fileInfo.name, new BlobReader(blob));
-        }
-      } catch (e) {
-        console.error(`Failed to fetch file ${fileInfo.name}:`, e);
-      }
-    })();
-    addPromises.push(addFilePromise);
-  }
-
-  // 等待所有文件添加完成，然后关闭 ZIP
-  const closePromise = Promise.all(addPromises).then(() => zipWriter.close());
-
-  // 处理可能的错误（不阻塞响应）
-  closePromise.catch((err) => {
-    console.error('ZIP creation error:', err);
-  });
-
-  // 阅后即焚：标记已消费（不等待完成）
-  if (shareData.oneTime && !shareData.consumedAt) {
-    c.executionCtx.waitUntil(
-      burnShareLink(kv, shareKey, shareData)
-    );
-  }
-
   // 使用用户自定义名称或默认名称
   const zipName = shareData.bundleName || `share-${token.slice(0, 8)}`;
-  // 确保文件名合法（移除特殊字符，限制长度）
-  const safeZipName = zipName
-    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '')
-    .slice(0, MAX_FILENAME_LENGTH);
-
-  // 返回流式响应
-  return new Response(readable, {
-    headers: {
-      'Content-Type': 'application/zip',
-      'Content-Disposition': `attachment; filename="${safeZipName}.zip"`,
-    },
-  });
+  return createZipDownloadResponse(
+    shareData.files,
+    db,
+    c.req.url,
+    sanitizeArchiveName(zipName),
+  );
 });
 
 export const shareRoutes = app;

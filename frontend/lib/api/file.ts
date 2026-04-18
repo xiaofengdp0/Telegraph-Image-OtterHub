@@ -206,6 +206,10 @@ export function getFileUrl(key: string): string {
   return `${API_URL}/file/${key}`;
 }
 
+export function getFileDownloadUrl(key: string): string {
+  return `${API_URL}/file/${key}/download`;
+}
+
 /**
  * 获取回收站文件 URL
  */

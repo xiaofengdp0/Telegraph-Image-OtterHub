@@ -1,56 +1,22 @@
 import { Hono } from 'hono';
-import { DBAdapterFactory } from '@utils/db-adapter';
 import { getFromCache, putToCache } from '@utils/cache';
 import type { Env } from '../../types/hono';
 import { fail } from '@utils/response';
-import { FileTag } from "@shared/types";
-import { verifyJWT } from "@utils/auth";
-import { getCookie } from 'hono/cookie';
+import { getAuthorizedFileAccess } from './access';
 
 export const rawRoutes = new Hono<{ Bindings: Env }>();
 
 rawRoutes.get('/:key', async (c) => {
   const key = c.req.param('key');
-  const db = DBAdapterFactory.getAdapter(c.env);
+  const access = await getAuthorizedFileAccess(c.env, c.req.raw, key);
+
+  if (access instanceof Response) {
+    return access;
+  }
+
+  const { db, isPrivate } = access;
 
   try {
-    const item = await db.getFileMetadataWithValue?.(key);
-    if (!item?.metadata) return fail(c, "File not found", 404);
-
-    // Check for private tag
-    const isPrivate = item.metadata?.tags?.includes(FileTag.Private);
-
-    if (isPrivate) {
-      let authorized = false;
-
-      // 1. 优先检查 API Token (Authorization Header)
-      const authHeader = c.req.header('Authorization');
-      if (authHeader && c.env.API_TOKEN) {
-        const apiToken = authHeader.replace(/Bearer\s+/i, '');
-        if (apiToken === c.env.API_TOKEN) {
-          authorized = true;
-        }
-      }
-
-      // 2. 检查 Cookie (仅在未通过 API Token 授权时)
-      if (!authorized) {
-        const token = getCookie(c, 'auth');
-        if (token) {
-          try {
-            // Use JWT_SECRET if available, otherwise fallback to PASSWORD
-            await verifyJWT(token, c.env.JWT_SECRET ?? c.env.PASSWORD ?? "");
-            authorized = true;
-          } catch (e) {
-            // Token invalid
-          }
-        }
-      }
-
-      if (!authorized) {
-        return fail(c, "Unauthorized access to private file", 401);
-      }
-    }
-
     // Range 请求：明确不缓存
     if (c.req.header('Range')) {
       return await db.get(key, c.req.raw);

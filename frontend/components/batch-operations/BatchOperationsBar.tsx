@@ -1,6 +1,6 @@
 "use client";
 
-import { Download, Trash2, X, Toolbox, Check, Tag, Copy, FilePen, Share2, ImageIcon, Music, Video, FileText } from "lucide-react";
+import { Download, Trash2, X, Toolbox, Check, Tag, Copy, FilePen, Share2, ImageIcon, Music, Video, FileText, XIcon } from "lucide-react";
 import { useState, useMemo } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -12,14 +12,15 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-import { useFileDataStore, useActiveItems, useFilteredFiles, useFileBuckets } from "@/stores/file";
+import { useFileDataStore, useFilteredFiles, useFileBuckets } from "@/stores/file";
 import { useFileUIStore, useActiveSelectedKeys, useTotalSelectedKeys, useSelectedStats, clearAllSelection, removeSelectionFromAllTypes } from "@/stores/file";
-import { getFileUrl, moveToTrash, deleteFile } from "@/lib/api";
-import { downloadFile, processBatch, getFileTypeFromKey } from "@/lib/utils";
-import { DIRECT_DOWNLOAD_LIMIT, ViewMode } from "@/lib/types";
+import { getFileDownloadUrl, getFileUrl, moveToTrash, deleteFile } from "@/lib/api";
+import { downloadFile, downloadFiles, processBatch, type DirectoryHandleResult } from "@/lib/utils";
+import { ViewMode } from "@/lib/types";
 import { BatchEditTagsDialog } from "./BatchEditTagsDialog";
 import { BatchRenameDialog } from "./BatchRenameDialog";
 import { BatchShareDialog } from "./BatchShareDialog";
+import { DownloadDirectoryGuide } from "@/components/download/DownloadDirectoryGuide";
 import { toast } from "sonner";
 import { FileType, MAX_FILES_IN_BUNDLE } from "@shared/types";
 
@@ -67,8 +68,9 @@ export function BatchOperationsBar() {
   const [showBatchTags, setShowBatchTags] = useState(false);
   const [showBatchRename, setShowBatchRename] = useState(false);
   const [showBatchShare, setShowBatchShare] = useState(false);
+  const [showDirGuide, setShowDirGuide] = useState(false);
+  const [pendingDownloadFiles, setPendingDownloadFiles] = useState<Array<{ key: string; metadata: typeof allItems[0]["metadata"] }> | null>(null);
 
-  const items = useActiveItems();
   const filteredFiles = useFilteredFiles();
 
   // ===== 跨类型文件数据 =====
@@ -106,20 +108,9 @@ export function BatchOperationsBar() {
     [activeSelectedKeys],
   );
 
-  const currentItemMap = useMemo(
-    () => new Map(items.map((f) => [f.name, f])),
-    [items],
-  );
-
   const isAllSelected =
     currentFiles.length > 0 && 
     currentFiles.every(file => activeSelectedSet.has(file.name));
-
-  // 检查是否是媒体类型（用于下载限制提示）
-  const hasMediaFiles = selectedItems.some(item => {
-    const type = getFileTypeFromKey(item.name);
-    return type === FileType.Audio || type === FileType.Video;
-  });
 
   /** ===== 批量标签成功回调 ===== */
   const handleBatchTagSuccess = (
@@ -151,47 +142,110 @@ export function BatchOperationsBar() {
     });
   };
 
+  /** ===== 开始批量下载 ===== */
+  const startBatchDownload = async (
+    files: Array<{ key: string; metadata: typeof allItems[0]["metadata"] }>,
+    dirHandleResult?: DirectoryHandleResult
+  ) => {
+    const toastId = toast.loading(`准备下载 ${files.length} 个文件...`);
+
+    try {
+      const downloadOptions = {
+        files,
+        getUrl: getFileDownloadUrl,
+        onDirectorySelected: (dirName: string) => {
+          toast.loading(`正在下载到 ${dirName}...`, { id: toastId });
+        },
+        onDirectoryReused: (dirName: string) => {
+          toast.loading(`正在下载到 ${dirName}...`, { id: toastId });
+        },
+        onFileStart: (index: number, fileName: string) => {
+          toast.loading(`下载中 (${index + 1}/${files.length}): ${fileName}`, { id: toastId });
+        },
+        onFileComplete: (index: number, fileName: string, success: boolean) => {
+          if (!success) {
+            toast.error(`下载失败: ${fileName}`, { duration: 2000 });
+          }
+        },
+      };
+
+      const result = dirHandleResult
+        ? await downloadFiles({ ...downloadOptions, dirHandleResult })
+        : await downloadFiles(downloadOptions);
+
+      if (result.cancelled > 0) {
+        toast.info(`下载已取消`, { id: toastId });
+      } else if (result.failed === 0) {
+        toast.success(`成功下载 ${result.success} 个文件`, { id: toastId });
+      } else {
+        toast.warning(`部分文件下载失败`, {
+          id: toastId,
+          description: `成功 ${result.success} 个，失败 ${result.failed} 个`,
+        });
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === 'NO_DIRECTORY_HANDLE') {
+        // 需要显示引导弹窗
+        toast.dismiss(toastId);
+        setPendingDownloadFiles(files);
+        setShowDirGuide(true);
+      } else {
+        toast.error("批量下载失败", { id: toastId });
+      }
+    }
+  };
+
+  /** ===== 处理目录选择 ===== */
+  const handleDirectorySelected = async (dirResult: DirectoryHandleResult) => {
+    setShowDirGuide(false);
+
+    if (!pendingDownloadFiles) return;
+
+    await startBatchDownload(pendingDownloadFiles, dirResult);
+    setPendingDownloadFiles(null);
+  };
+
   /** ===== 批量下载（跨类型） ===== */
-  const handleBatchDownload = () => {
+  const handleBatchDownload = async () => {
     if (totalSelectedKeys.length === 0) return;
 
-    const oversizedByType: Partial<Record<FileType, string[]>> = {};
-    let downloadCount = 0;
+    const files = totalSelectedKeys
+      .map((key) => {
+        const file = allItemMap.get(key);
+        if (!file) return null;
+        return { key, metadata: file.metadata };
+      })
+      .filter(Boolean) as Array<{ key: string; metadata: typeof allItems[0]["metadata"] }>;
 
-    for (const key of totalSelectedKeys) {
-      const file = allItemMap.get(key);
-      if (!file) continue;
+    if (files.length === 1) {
+      const [{ key, metadata }] = files;
+      const toastId = toast.loading(`准备下载: ${metadata.fileName}`);
 
-      const { fileSize, fileName } = file.metadata;
-      const fileType = getFileTypeFromKey(key);
-
-      // 媒体文件大文件限制
-      const isMedia = fileType === FileType.Audio || fileType === FileType.Video;
-      if (isMedia && fileSize > DIRECT_DOWNLOAD_LIMIT) {
-        if (!oversizedByType[fileType]) oversizedByType[fileType] = [];
-        oversizedByType[fileType].push(fileName);
-        continue;
+      try {
+        const result = await downloadFile(getFileDownloadUrl(key), metadata, (progress) => {
+          toast.loading(
+            `下载中: ${metadata.fileName} (${progress.percentage}%)`,
+            { id: toastId }
+          );
+        });
+        if (result.status === "cancelled") {
+          toast.dismiss(toastId);
+          return;
+        }
+        toast.success(`下载完成: ${metadata.fileName}`, { id: toastId });
+      } catch (error) {
+        toast.error(`下载失败: ${metadata.fileName}`, { id: toastId });
       }
-
-      downloadFile(getFileUrl(key), file.metadata);
-      downloadCount++;
+      return;
     }
 
-    if (downloadCount > 0) {
-      toast.success(`正在下载 ${downloadCount} 个文件`);
+    if (files.length > MAX_FILES_IN_BUNDLE) {
+      toast.error(`批量下载最多支持 ${MAX_FILES_IN_BUNDLE} 个文件`);
+      return;
     }
 
-    // 提示哪些文件因大小限制未自动下载
-    const oversizedTypes = Object.entries(oversizedByType).filter(([_, files]) => files.length > 0);
-    if (oversizedTypes.length > 0) {
-      const details = oversizedTypes
-        .map(([type, files]) => `${typeNames[type as FileType]}: ${files.length}个`)
-        .join("，");
-      toast.warning("部分媒体文件过大，请手动下载", {
-        description: details,
-        duration: 5000,
-      });
-    }
+    // 开始批量下载（可能显示引导弹窗）
+    await startBatchDownload(files);
   };
 
   /** ===== 批量删除（跨类型） ===== */
@@ -336,12 +390,18 @@ export function BatchOperationsBar() {
   };
 
   /** ===== 类型统计标签组件 ===== */
-  const TypeBadge = ({ type, count }: { type: FileType; count: number }) => {
+  const TypeBadge = ({ type, count, onClear }: { type: FileType; count: number; onClear?: () => void }) => {
     const Icon = typeIcons[type];
     return (
-      <Badge variant="secondary" className="gap-1 bg-white/20 text-primary-foreground border-none">
-        <Icon className="h-3 w-3" />
-        {count}
+      <Badge
+        variant="secondary"
+        className="group gap-1 bg-white/20 text-primary-foreground border-none cursor-pointer transition-colors"
+        onClick={onClear}
+        title={`清空选中「${typeNames[type]}」`}
+      >
+        <Icon className="h-3 w-3 group-hover:hidden" />
+        <span className="group-hover:hidden">{count}</span>
+        <XIcon className="h-3 w-3 hidden group-hover:block" />
       </Badge>
     );
   };
@@ -360,7 +420,7 @@ export function BatchOperationsBar() {
             {selectedStats.length > 0 && (
               <div className="hidden md:flex items-center gap-1">
                 {selectedStats.map(({ type, count }) => (
-                  <TypeBadge key={type} type={type} count={count} />
+                  <TypeBadge key={type} type={type} count={count} onClear={() => clearSelection(type)} />
                 ))}
               </div>
             )}
@@ -503,6 +563,12 @@ export function BatchOperationsBar() {
         files={selectedItems}
         open={showBatchShare}
         onOpenChange={setShowBatchShare}
+      />
+
+      <DownloadDirectoryGuide
+        open={showDirGuide}
+        onOpenChange={setShowDirGuide}
+        onDirectorySelected={handleDirectorySelected}
       />
     </>
   );
